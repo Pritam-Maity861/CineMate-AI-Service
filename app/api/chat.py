@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from sse_starlette.sse import EventSourceResponse
 from app.graph.workflow import graph
 from app.graph.nodes import active_auth_token, active_generative_ui
+import asyncio
 import json
 import logging
 
@@ -102,37 +103,34 @@ async def chat_endpoint(
 
                 guardrail_refusal = check_domain_guardrail(body.message)
                 if guardrail_refusal:
-                    yield {
-                        "event": "chunk",
-                        "data": json.dumps({"delta": guardrail_refusal}),
-                    }
+                    # Stream guardrail refusal cleanly in chunks
+                    chunk_sz = 16
+                    for i in range(0, len(guardrail_refusal), chunk_sz):
+                        chunk = guardrail_refusal[i : i + chunk_sz]
+                        yield {
+                            "event": "chunk",
+                            "data": json.dumps({"delta": chunk}),
+                        }
+                        await asyncio.sleep(0.01)
                     yield {"event": "done", "data": "[DONE]"}
                     return
 
-                has_streamed = False
-                async for ev in graph.astream_events(state_input, version="v2"):
-                    kind = ev.get("event")
-                    if kind == "on_chat_model_stream":
-                        chunk = ev.get("data", {}).get("chunk")
-                        if chunk and hasattr(chunk, "content") and chunk.content:
-                            delta = chunk.content
-                            if isinstance(delta, str) and delta:
-                                has_streamed = True
-                                yield {
-                                    "event": "chunk",
-                                    "data": json.dumps({"delta": delta}),
-                                }
+                # Execute graph to completion (handles all tools, auth, and logic)
+                final_state = await graph.ainvoke(state_input)
+                last_msg = final_state["messages"][-1]
+                content = getattr(last_msg, "content", str(last_msg))
 
-                if not has_streamed:
-                    final_state = await graph.ainvoke(state_input)
-                    last_msg = final_state["messages"][-1]
-                    content = getattr(last_msg, "content", str(last_msg))
+                # Stream response smoothly in chunks for typewriter animation
+                chunk_sz = 16
+                for i in range(0, len(content), chunk_sz):
+                    chunk = content[i : i + chunk_sz]
                     yield {
                         "event": "chunk",
-                        "data": json.dumps({"delta": content}),
+                        "data": json.dumps({"delta": chunk}),
                     }
+                    await asyncio.sleep(0.015)
 
-                gen_ui = active_generative_ui.get()
+                gen_ui = active_generative_ui.get() or final_state.get("generative_ui")
                 if gen_ui:
                     yield {
                         "event": "generative_ui",
