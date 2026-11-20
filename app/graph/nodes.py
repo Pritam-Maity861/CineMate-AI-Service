@@ -90,6 +90,28 @@ async def search_movies_tool(
 
 
 @tool
+async def semantic_movie_search_tool(vibe_or_theme: str) -> str:
+    """
+    Search movies semantically by vibe, theme, plot description, or mood.
+    Examples: 'mind-bending sci-fi with dark humor', 'emotional family drama', 'action thriller with twists'.
+    """
+    from app.vector.search import semantic_movie_search
+
+    results = await semantic_movie_search(query=vibe_or_theme, top_k=5)
+    if not results:
+        return f"No movies found matching the theme '{vibe_or_theme}'."
+
+    lines = [f"Semantic matches for '{vibe_or_theme}':"]
+    for m in results:
+        lines.append(
+            f"- {m['title']} (Rating: {m.get('rating', 'N/A')}⭐ | Genres: {m.get('genres', 'N/A')} | Match: {m.get('score')})\n"
+            f"  Synopsis: {m.get('description', 'N/A')}\n"
+            f"  Movie ID: {m['id']}"
+        )
+    return "\n\n".join(lines)
+
+
+@tool
 async def get_movie_details_tool(movie_id: str) -> str:
     """Get full details of a movie including synopsis, duration, cast, director, and trailer."""
     m = await node_client.get_movie_details(movie_id)
@@ -478,6 +500,7 @@ FORMATTING GUIDELINES:
 
 AVAILABLE_TOOLS = [
     search_movies_tool,
+    semantic_movie_search_tool,
     get_movie_details_tool,
     list_theaters_tool,
     get_showtimes_tool,

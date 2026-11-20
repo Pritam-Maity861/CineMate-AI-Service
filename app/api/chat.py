@@ -98,25 +98,51 @@ async def chat_endpoint(
 
         async def event_generator():
             try:
-                final_state = await graph.ainvoke(state_input)
-                last_message = final_state["messages"][-1]
-                content = getattr(last_message, "content", str(last_message))
+                from app.graph.nodes import check_domain_guardrail
 
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"type": "TEXT", "content": content}),
-                }
+                guardrail_refusal = check_domain_guardrail(body.message)
+                if guardrail_refusal:
+                    yield {
+                        "event": "chunk",
+                        "data": json.dumps({"delta": guardrail_refusal}),
+                    }
+                    yield {"event": "done", "data": "[DONE]"}
+                    return
 
-                if final_state.get("generative_ui"):
+                has_streamed = False
+                async for ev in graph.astream_events(state_input, version="v2"):
+                    kind = ev.get("event")
+                    if kind == "on_chat_model_stream":
+                        chunk = ev.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            delta = chunk.content
+                            if isinstance(delta, str) and delta:
+                                has_streamed = True
+                                yield {
+                                    "event": "chunk",
+                                    "data": json.dumps({"delta": delta}),
+                                }
+
+                if not has_streamed:
+                    final_state = await graph.ainvoke(state_input)
+                    last_msg = final_state["messages"][-1]
+                    content = getattr(last_msg, "content", str(last_msg))
+                    yield {
+                        "event": "chunk",
+                        "data": json.dumps({"delta": content}),
+                    }
+
+                gen_ui = active_generative_ui.get()
+                if gen_ui:
                     yield {
                         "event": "generative_ui",
-                        "data": json.dumps(final_state["generative_ui"]),
+                        "data": json.dumps(gen_ui),
                     }
 
                 yield {"event": "done", "data": "[DONE]"}
 
             except Exception as e:
-                logging.error(f"[Chat Endpoint Error] {e}", exc_info=True)
+                logging.error(f"[Chat Endpoint SSE Error] {e}", exc_info=True)
                 yield {
                     "event": "error",
                     "data": json.dumps({"error": str(e)}),
