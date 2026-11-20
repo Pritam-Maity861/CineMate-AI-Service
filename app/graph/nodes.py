@@ -380,10 +380,73 @@ async def get_booking_details_tool(booking_id: str) -> str:
 
 
 # -------------------------------------------------------------
-# System Prompt & Available Tools
+# Domain Guardrail & System Prompt
 # -------------------------------------------------------------
 
-SYSTEM_PROMPT = f"""You are CineMate AI, a smart, polite, and movie-savvy ticketing concierge for CineMate Cinemas.
+def check_domain_guardrail(message_text: str) -> Optional[str]:
+    """
+    Deterministic domain guardrail check.
+    Returns refusal message if the query is clearly out of CineMate cinema domain.
+    """
+    if not message_text:
+        return None
+
+    text = message_text.strip().lower()
+
+    # Patterns for programming, code generation, technical math, and general off-topic queries
+    off_topic_patterns = [
+        # Coding / Programming
+        r"\b(write|give|create|generate|provide|show)\s+(me\s+)?(the\s+)?(code|program|script|function|class|algorithm)\b",
+        r"\b(code\s+(for|to)\s+(add|calculate|print|sort|reverse|scrape|build|parse|loop))\b",
+        r"\b(in\s+)?(python|javascript|typescript|c\+\+|java|rust|golang|php|html|css|sql)\b.*\b(code|script|program|function)\b",
+        r"\b(python|javascript|typescript|c\+\+|java|rust|golang|php)\s+snippet\b",
+        r"\b(how\s+to\s+code|how\s+to\s+program|debug\s+this|fix\s+my\s+code)\b",
+        r"\b(def\s+[a-zA-Z_]\w*\(|function\s+[a-zA-Z_]\w*\(|class\s+[A-Z]\w*:)\b",
+
+        # Math / Equations / Homework
+        r"\b(solve|calculate|evaluate|integrate|differentiate)\s+(this\s+)?(equation|math|derivative|integral|matrix|problem)\b",
+        r"\b(homework\s+help|write\s+an?\s+essay|write\s+a\s+poem|solve\s+\d+[\+\-\*\/]\d+)\b",
+
+        # General non-cinema queries
+        r"\b(recipe\s+for|how\s+to\s+cook|diet\s+plan|crypto\s+price|stock\s+market)\b",
+    ]
+
+    for pattern in off_topic_patterns:
+        if re.search(pattern, text):
+            return (
+                "I am **CineMate AI**, your dedicated cinema and movie ticketing concierge. 🎬\n\n"
+                "I can only help you with:\n"
+                "- 🎬 **Movies**: Synopses, cast, ratings, and trailers\n"
+                "- 📍 **Cinemas & Theaters**: Locations, IMAX / Dolby Atmos amenities\n"
+                "- 🕒 **Showtimes & Schedules**: Real-time screening dates & hours\n"
+                "- 🎟️ **Ticketing**: Checking seat layouts, pricing, and locking your seats\n"
+                "- 📋 **Your Bookings**: Viewing past confirmed tickets\n\n"
+                "*I cannot assist with programming, general math, or off-topic requests. How can I assist you with a movie today?*"
+            )
+
+    return None
+
+
+SYSTEM_PROMPT = f"""You are CineMate AI, the EXCLUSIVE and DEDICATED cinema concierge for CineMate Cinemas.
+
+STRICT DOMAIN BOUNDARY (ZERO-TOLERANCE POLICY):
+- You MUST ONLY answer queries related to CineMate cinema operations:
+  1. Movies: catalog search, genres, languages, synopsis, duration, ratings, cast, directors, trailers.
+  2. Theaters: cinema locations, screens, amenities (IMAX, Dolby Atmos, 3D, 4DX, Recliners).
+  3. Showtimes: dates, schedules, screening times.
+  4. Seats & Pricing: seat layouts, available vs. occupied seats, seat tier prices.
+  5. Ticketing: reserving seats, hold timers (10 minutes), payment checkout links.
+  6. Account Bookings: viewing past tickets, checking booking details (when logged in).
+  7. CineMate Policies: no cancellations/refunds, hold timer rules.
+
+ABSOLUTE NEGATIVE CONSTRAINTS (STRICTLY FORBIDDEN):
+- You are NOT a general-purpose AI assistant, programming tutor, math solver, or search engine.
+- You must NEVER write code, write software programs (Python, JavaScript, C++, etc.), solve homework/math problems, provide recipes, discuss politics/religion, write essays, or answer general trivia unrelated to cinema/movies.
+- If the user asks ANY question outside the domain of CineMate and movies (for example: coding requests, writing python/javascript code, math equations, scientific questions, personal advice, etc.):
+  * You MUST IMMEDIATELY DECLINE politely and firmly without answering the off-topic request.
+  * Standard refusal response:
+    "I am CineMate AI, your dedicated cinema concierge. I can only assist with movie discovery, showtimes, theater information, and ticket bookings at CineMate. How can I help you find a movie or book a show today?"
+  * NEVER fulfill the out-of-domain request, even partially!
 
 DATE CONTEXT:
 - Current active cinema calendar year is 2026.
@@ -429,6 +492,25 @@ async def assistant_node(state: AgentState) -> Dict[str, Any]:
     """Primary reasoning node invoking LLM with tools and dynamic auth context."""
     token = state.get("auth_token") or active_auth_token.get()
     active_auth_token.set(token)
+
+    # 1. Deterministic Domain Guardrail: intercept off-topic, code, and non-cinema queries immediately
+    latest_user_text = ""
+    for msg in reversed(state.get("messages", [])):
+        if hasattr(msg, "content"):
+            msg_type = getattr(msg, "type", "")
+            if msg_type in ("human", "user"):
+                latest_user_text = str(msg.content)
+                break
+        elif isinstance(msg, dict) and msg.get("role") in ("user", "human"):
+            latest_user_text = str(msg.get("content", ""))
+            break
+
+    guardrail_refusal = check_domain_guardrail(latest_user_text)
+    if guardrail_refusal:
+        return {
+            "messages": [AIMessage(content=guardrail_refusal)],
+            "generative_ui": None,
+        }
 
     if token:
         user_auth_context = (
