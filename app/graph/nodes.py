@@ -288,25 +288,129 @@ async def book_seats_tool(showtime_id: str, seats: str) -> str:
     )
 
 
+@tool
+async def get_my_bookings_tool() -> str:
+    """
+    Fetch the list of ticket bookings made by the currently authenticated user.
+    Requires user to be logged in.
+    """
+    token = active_auth_token.get()
+    if not token:
+        return (
+            "AUTHENTICATION_REQUIRED: The user is currently not logged in. "
+            "Please instruct the user to log in at [Log In](/login) to view their personal bookings."
+        )
+
+    try:
+        bookings = await node_client.list_my_bookings(token)
+    except Exception as e:
+        return f"ERROR: Could not retrieve bookings: {str(e)}"
+
+    if not bookings:
+        return "You have no previous movie bookings in your account."
+
+    summary = ["Your CineMate Bookings:"]
+    for b in bookings[:10]:
+        b_id = b.get("id")
+        status = b.get("status", "UNKNOWN")
+        total = b.get("totalAmount", 0)
+        showtime = b.get("showtime", {})
+        movie = showtime.get("movie", {})
+        title = movie.get("title", "Movie")
+        theater = showtime.get("theater", {}).get("name", "Cinema")
+        start_time = showtime.get("startTime", "")
+        seats = [
+            bs.get("seat", {}).get("row", "") + str(bs.get("seat", {}).get("number", ""))
+            for bs in b.get("seats", [])
+        ]
+        seats_str = ", ".join(filter(None, seats)) or "N/A"
+        summary.append(
+            f"- Booking ID: {b_id} | Status: {status} | Movie: {title} | Theater: {theater} | Seats: {seats_str} | Total: ₹{total} | Time: {start_time}"
+        )
+
+    return "\n".join(summary)
+
+
+@tool
+async def get_booking_details_tool(booking_id: str) -> str:
+    """
+    Fetch specific booking details and status by booking UUID for the logged-in user.
+    Requires user to be logged in.
+    """
+    token = active_auth_token.get()
+    if not token:
+        return (
+            "AUTHENTICATION_REQUIRED: The user is currently not logged in. "
+            "Please instruct the user to log in at [Log In](/login) to inspect booking details."
+        )
+
+    try:
+        b = await node_client.get_booking(booking_id, token)
+    except Exception as e:
+        return f"ERROR: Could not retrieve booking {booking_id}: {str(e)}"
+
+    if not b:
+        return f"Booking {booking_id} was not found or you do not have permission to view it."
+
+    status = b.get("status", "UNKNOWN")
+    total = b.get("totalAmount", 0)
+    showtime = b.get("showtime", {})
+    movie = showtime.get("movie", {})
+    title = movie.get("title", "Movie")
+    theater = showtime.get("theater", {}).get("name", "Cinema")
+    screen = showtime.get("screen", {}).get("name", "Screen")
+    start_time = showtime.get("startTime", "")
+    seats = [
+        bs.get("seat", {}).get("row", "") + str(bs.get("seat", {}).get("number", ""))
+        for bs in b.get("seats", [])
+    ]
+
+    return (
+        f"Booking Details:\n"
+        f"- ID: {booking_id}\n"
+        f"- Status: {status}\n"
+        f"- Movie: {title}\n"
+        f"- Theater: {theater} ({screen})\n"
+        f"- Showtime: {start_time}\n"
+        f"- Seats: {', '.join(filter(None, seats))}\n"
+        f"- Total Amount: ₹{total}\n"
+        f"- Checkout Link (if pending): {settings.FRONTEND_URL}/checkout/{booking_id}"
+    )
+
+
 # -------------------------------------------------------------
 # System Prompt & Available Tools
 # -------------------------------------------------------------
 
 SYSTEM_PROMPT = f"""You are CineMate AI, a smart, polite, and movie-savvy ticketing concierge for CineMate Cinemas.
 
-Your primary capabilities:
-1. Movie Discovery: Search movies by genre, language, title, and provide synopses.
-2. Showtimes & Theaters: Look up approved showtimes and theaters for any date.
-3. Seat Checking: View real-time availability (Available vs Booked).
-4. Seat Booking: When a user chooses seats (e.g. "Book C3 and C4"), you MUST call `book_seats_tool` to hold them in the database.
+ROLE & ACCESS PERMISSIONS:
+1. PUBLIC DATA ACCESS (Open for Everyone, No Login Required):
+   - Movie Discovery: Search movies by genre, language, title, and synopsis.
+   - Theaters & Schedules: List theaters, approved showtimes, and screening dates.
+   - Seat Layouts & Pricing: Check auditorium layouts, available seats, booked seats, and seat tier prices.
 
-CRITICAL RULES FOR WORKABLE PAYMENT & CHECKOUT LINKS:
-- NEVER EVER fabricate or hallucinate dummy booking IDs or fake URLs like 'https://cinemate.example.com/...'. Any link using 'cinemate.example.com' is completely broken and invalid.
-- NEVER pretend you booked or held seats without successfully calling `book_seats_tool`.
-- When `book_seats_tool` succeeds, provide the real workable checkout URL: {settings.FRONTEND_URL}/checkout/{{booking_id}}
-- Always format the link as: [Proceed to Checkout – Pay ₹{{amount}}]({settings.FRONTEND_URL}/checkout/{{booking_id}})
-- If `book_seats_tool` returns AUTHENTICATION_REQUIRED or BOOKING_FAILED, explain politely that they need to log in to finalize holding the seats.
-- Output clean, structured Markdown with bullet points or neat tables.
+2. STRICT AUTHENTICATION GUARDRAILS (Personalized & Booking Actions):
+   - If a user is NOT LOGGED IN (guest mode):
+     - They can freely browse all public data above.
+     - If they ask to BOOK seats, HOLD/LOCK seats, view "MY BOOKINGS", or check PERSONAL booking tickets:
+       * You MUST STRICTLY REFUSE the action immediately.
+       * Tell the user politely: "🔒 *You need to be logged in to CineMate to book seats or view your personal bookings.*"
+       * Provide the login link: [Log In to CineMate](/login)
+       * Under NO circumstances simulate or fabricate a booking response or fake checkout link for an unauthenticated user!
+
+3. AUTHENTICATED ACTIONS (When User is Logged In with Auth Token):
+   - Seat Booking: When user chooses seats (e.g. "Book C3 and C4"):
+     * Look up showtime_id using `get_showtimes_tool` if not already known.
+     * Call `book_seats_tool(showtime_id=..., seats=...)`.
+     * Upon SUCCESS_BOOKED, present the booking summary and provide the real checkout link:
+       [Proceed to Checkout – Pay ₹{{amount}}]({settings.FRONTEND_URL}/checkout/{{booking_id}})
+   - My Bookings: When user asks "show my bookings" or "my tickets", call `get_my_bookings_tool`.
+   - Booking Status: When user provides a booking ID or asks for details, call `get_booking_details_tool`.
+
+FORMATTING GUIDELINES:
+- Use clean, structured Markdown with bullet points or compact tables.
+- NEVER invent external domains (e.g. cinemate.example.com).
 """
 
 AVAILABLE_TOOLS = [
@@ -316,6 +420,8 @@ AVAILABLE_TOOLS = [
     get_showtimes_tool,
     get_showtime_seats_tool,
     book_seats_tool,
+    get_my_bookings_tool,
+    get_booking_details_tool,
 ]
 
 
