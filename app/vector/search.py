@@ -45,11 +45,31 @@ def generate_local_embedding(text: str, dim: int = VECTOR_DIM) -> np.ndarray:
     return vec
 
 
+# Global cache for FastEmbed model instance
+_fastembed_model = None
+
+
 async def get_embedding(text: str) -> np.ndarray:
     """
-    Returns an embedding vector using Gemini/OpenAI if configured,
-    or falls back cleanly to the local dense vector generator.
+    Returns an embedding vector:
+    1. FastEmbed (100% Free, Local, No API key, runs on CPU via ONNX).
+    2. Google Gemini Free Tier (text-embedding-004 if GEMINI_API_KEY is present).
+    3. Fallback: Deterministic local dense vector engine (zero dependencies, 100% free).
     """
+    global _fastembed_model
+
+    # 1. Try FastEmbed (Free local neural model)
+    try:
+        from fastembed import TextEmbedding
+
+        if _fastembed_model is None:
+            _fastembed_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        embeddings = list(_fastembed_model.embed([text]))
+        return np.array(embeddings[0], dtype=np.float32)
+    except (ImportError, Exception):
+        pass
+
+    # 2. Try Gemini Free API (if key provided)
     if settings.GEMINI_API_KEY:
         try:
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -63,6 +83,7 @@ async def get_embedding(text: str) -> np.ndarray:
         except Exception as e:
             logger.warning(f"Gemini embedding fallback: {e}")
 
+    # 3. Try OpenAI (if key provided)
     if settings.OPENAI_API_KEY and settings.DEFAULT_MODEL_PROVIDER == "openai":
         try:
             from langchain_openai import OpenAIEmbeddings
@@ -73,6 +94,7 @@ async def get_embedding(text: str) -> np.ndarray:
         except Exception as e:
             logger.warning(f"OpenAI embedding fallback: {e}")
 
+    # 4. Zero-dependency local dense vector fallback (Immediate & Free)
     return generate_local_embedding(text)
 
 
