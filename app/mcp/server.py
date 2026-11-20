@@ -97,3 +97,4 @@ async def get_payment_status(booking_id: str, auth_token: str) -> str:
 
 if __name__ == "__main__":
     mcp.run()
+
