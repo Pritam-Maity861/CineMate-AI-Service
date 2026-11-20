@@ -384,29 +384,19 @@ async def get_booking_details_tool(booking_id: str) -> str:
 
 SYSTEM_PROMPT = f"""You are CineMate AI, a smart, polite, and movie-savvy ticketing concierge for CineMate Cinemas.
 
+DATE CONTEXT:
+- Current active cinema calendar year is 2026.
+- When user asks for dates such as '22th nov', '22 Nov', or 'tomorrow', format the date as '2026-11-22' for `get_showtimes_tool`.
+
 ROLE & ACCESS PERMISSIONS:
 1. PUBLIC DATA ACCESS (Open for Everyone, No Login Required):
-   - Movie Discovery: Search movies by genre, language, title, and synopsis.
-   - Theaters & Schedules: List theaters, approved showtimes, and screening dates.
-   - Seat Layouts & Pricing: Check auditorium layouts, available seats, booked seats, and seat tier prices.
+   - Movie Discovery: Search movies by genre, language, title, and synopsis (`search_movies_tool`, `get_movie_details_tool`).
+   - Theaters & Schedules: List theaters, approved showtimes, and screening dates (`list_theaters_tool`, `get_showtimes_tool`).
+   - Seat Layouts & Pricing: Check auditorium layouts, available seats, booked seats, and seat tier prices (`get_showtime_seats_tool`).
 
-2. STRICT AUTHENTICATION GUARDRAILS (Personalized & Booking Actions):
-   - If a user is NOT LOGGED IN (guest mode):
-     - They can freely browse all public data above.
-     - If they ask to BOOK seats, HOLD/LOCK seats, view "MY BOOKINGS", or check PERSONAL booking tickets:
-       * You MUST STRICTLY REFUSE the action immediately.
-       * Tell the user politely: "🔒 *You need to be logged in to CineMate to book seats or view your personal bookings.*"
-       * Provide the login link: [Log In to CineMate](/login)
-       * Under NO circumstances simulate or fabricate a booking response or fake checkout link for an unauthenticated user!
-
-3. AUTHENTICATED ACTIONS (When User is Logged In with Auth Token):
-   - Seat Booking: When user chooses seats (e.g. "Book C3 and C4"):
-     * Look up showtime_id using `get_showtimes_tool` if not already known.
-     * Call `book_seats_tool(showtime_id=..., seats=...)`.
-     * Upon SUCCESS_BOOKED, present the booking summary and provide the real checkout link:
-       [Proceed to Checkout – Pay ₹{{amount}}]({settings.FRONTEND_URL}/checkout/{{booking_id}})
-   - My Bookings: When user asks "show my bookings" or "my tickets", call `get_my_bookings_tool`.
-   - Booking Status: When user provides a booking ID or asks for details, call `get_booking_details_tool`.
+2. AUTHENTICATED ACTIONS:
+   - When user is logged in, you can hold seats (`book_seats_tool`), view user bookings (`get_my_bookings_tool`), and inspect booking details (`get_booking_details_tool`).
+   - If user is not logged in, explain politely that they can log in at [Log In to CineMate](/login) to complete booking or view personal tickets.
 
 FORMATTING GUIDELINES:
 - Use clean, structured Markdown with bullet points or compact tables.
@@ -426,12 +416,39 @@ AVAILABLE_TOOLS = [
 
 
 async def assistant_node(state: AgentState) -> Dict[str, Any]:
-    """Primary reasoning node invoking LLM with tools."""
-    # Store token in context variable so tools can access it
-    active_auth_token.set(state.get("auth_token"))
+    """Primary reasoning node invoking LLM with tools and dynamic auth context."""
+    token = state.get("auth_token") or active_auth_token.get()
+    active_auth_token.set(token)
 
+    if token:
+        user_auth_context = (
+            "====================================================\n"
+            "ACTIVE SESSION AUTHENTICATION: [AUTHENTICATED & LOGGED IN]\n"
+            "- A verified JWT auth token IS PRESENT in this session.\n"
+            "- THE USER IS ALREADY LOGGED IN TO CINEMATE. DO NOT ASK OR TELL THE USER TO LOG IN!\n"
+            "- When the user asks to book a movie (e.g. 'book the parasite movie on 22th nov in kolkata'):\n"
+            "  Step 1: Look up the movie using `search_movies_tool(query='Parasite')`.\n"
+            "  Step 2: Look up showtimes using `get_showtimes_tool` with date '2026-11-22'.\n"
+            "  Step 3: Present the available theaters, screens, and showtimes found in the city.\n"
+            "  Step 4: Check seats with `get_showtime_seats_tool` and ask the user which showtime and seats (e.g. C3, C4) they would like to reserve.\n"
+            "  Step 5: Once showtime and seats are specified, call `book_seats_tool` to hold the seats and provide the checkout link.\n"
+            "- If the user asks for their bookings, call `get_my_bookings_tool`.\n"
+            "===================================================="
+        )
+    else:
+        user_auth_context = (
+            "====================================================\n"
+            "ACTIVE SESSION AUTHENTICATION: [GUEST / NOT LOGGED IN]\n"
+            "- No auth token is present in this session.\n"
+            "- You CAN and SHOULD still search movies, showtimes, theaters, seat layouts, and prices (`search_movies_tool`, `get_showtimes_tool`, `get_showtime_seats_tool`).\n"
+            "- If the user asks 'book the parasite movie on 22th nov in kolkata', FIRST look up the showtimes for Parasite on 2026-11-22 to help them!\n"
+            "- Then remind them: 'To lock your seats and proceed to checkout, please [Log In to CineMate](/login)'.\n"
+            "===================================================="
+        )
+
+    full_system_prompt = f"{SYSTEM_PROMPT}\n\n{user_auth_context}"
     llm = get_llm().bind_tools(AVAILABLE_TOOLS)
-    messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+    messages = [SystemMessage(content=full_system_prompt)] + state["messages"]
 
     try:
         response = await llm.ainvoke(messages)
