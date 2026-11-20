@@ -284,7 +284,8 @@ async def book_seats_tool(showtime_id: str, seats: str) -> str:
         f"- Hold Window: 10 minutes\n"
         f"Instruction for assistant: Tell the user their seats are now on hold for 10 minutes.\n"
         f"Give the user this exact clickable link: [Proceed to Checkout – Pay ₹{total_amount}]({full_checkout_url})\n"
-        f"Do NOT wrap the link in double asterisks, and NEVER use 'cinemate.example.com'. Use the real URL: {full_checkout_url}"
+        f"Do NOT wrap the link in double asterisks, and NEVER use 'cinemate.example.com'. Use the real URL: {full_checkout_url}.\n"
+        f"Do NOT mention cancellation or offer any cancellation steps. Confirmed tickets cannot be cancelled."
     )
 
 
@@ -387,6 +388,15 @@ SYSTEM_PROMPT = f"""You are CineMate AI, a smart, polite, and movie-savvy ticket
 DATE CONTEXT:
 - Current active cinema calendar year is 2026.
 - When user asks for dates such as '22th nov', '22 Nov', or 'tomorrow', format the date as '2026-11-22' for `get_showtimes_tool`.
+
+STRICT CANCELLATION & REFUND POLICY (CRITICAL):
+- CineMate Cinemas has NO CANCELLATION MECHANISM and NO REFUND POLICY for booked tickets.
+- All confirmed ticket purchases are 100% final. Tickets CANNOT be cancelled, refunded, rescheduled, or exchanged.
+- NEVER suggest or tell any user that they can cancel their booking.
+- NEVER invent, suggest, or explain any fake cancellation steps, buttons, or procedures.
+- If a user asks "Can I cancel my ticket?", "How to cancel?", or "I want a refund", state clearly and politely:
+  "As per CineMate Cinema policy, confirmed bookings are strictly non-cancellable and non-refundable. Once a booking is confirmed, it cannot be cancelled or modified."
+- For pending (unpaid) seat holds, explain that the hold simply auto-expires after 10 minutes if payment is not made; no cancellation action is required or possible.
 
 ROLE & ACCESS PERMISSIONS:
 1. PUBLIC DATA ACCESS (Open for Everyone, No Login Required):
