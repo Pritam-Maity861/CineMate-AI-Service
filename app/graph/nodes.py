@@ -255,6 +255,7 @@ async def book_seats_tool(showtime_id: str, seats: str) -> str:
     total_amount = booking.get("totalAmount") or total_calculated_price
     expires_at = booking.get("expiresAt")
     checkout_url = f"/checkout/{booking_id}"
+    full_checkout_url = f"{settings.FRONTEND_URL}/checkout/{booking_id}"
 
     # Set Generative UI card
     active_generative_ui.set(
@@ -263,6 +264,7 @@ async def book_seats_tool(showtime_id: str, seats: str) -> str:
             "data": {
                 "booking_id": booking_id,
                 "checkout_url": checkout_url,
+                "full_checkout_url": full_checkout_url,
                 "total_amount": total_amount,
                 "seats": resolved_seat_names,
                 "expires_at": expires_at,
@@ -277,11 +279,12 @@ async def book_seats_tool(showtime_id: str, seats: str) -> str:
         f"- Booking ID: {booking_id}\n"
         f"- Seats Held: {', '.join(resolved_seat_names)}\n"
         f"- Total Amount: ₹{total_amount}\n"
-        f"- Checkout Link: {checkout_url}\n"
+        f"- Workable Checkout Link: {full_checkout_url}\n"
+        f"- Relative Route: {checkout_url}\n"
         f"- Hold Window: 10 minutes\n"
-        f"Instruction for assistant: Tell the user their seats are now on hold. "
-        f"Provide the exact checkout relative link: [Proceed to Checkout]({checkout_url}). "
-        f"DO NOT invent any fake external domain (like cinemate.example.com). The UI will render a checkout button automatically."
+        f"Instruction for assistant: Tell the user their seats are now on hold for 10 minutes.\n"
+        f"Give the user this exact clickable link: [Proceed to Checkout – Pay ₹{total_amount}]({full_checkout_url})\n"
+        f"Do NOT wrap the link in double asterisks, and NEVER use 'cinemate.example.com'. Use the real URL: {full_checkout_url}"
     )
 
 
@@ -289,7 +292,7 @@ async def book_seats_tool(showtime_id: str, seats: str) -> str:
 # System Prompt & Available Tools
 # -------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are CineMate AI, a smart, polite, and movie-savvy ticketing concierge for CineMate Cinemas.
+SYSTEM_PROMPT = f"""You are CineMate AI, a smart, polite, and movie-savvy ticketing concierge for CineMate Cinemas.
 
 Your primary capabilities:
 1. Movie Discovery: Search movies by genre, language, title, and provide synopses.
@@ -297,12 +300,13 @@ Your primary capabilities:
 3. Seat Checking: View real-time availability (Available vs Booked).
 4. Seat Booking: When a user chooses seats (e.g. "Book C3 and C4"), you MUST call `book_seats_tool` to hold them in the database.
 
-STRICT CONSTRAINTS & RULES:
-- NEVER pretend you held or booked seats without successfully calling `book_seats_tool`.
-- NEVER invent or fabricate booking IDs or fake URLs like 'https://cinemate.example.com/checkout...'.
-- After `book_seats_tool` returns SUCCESS_BOOKED with a booking ID, always provide the exact relative link: [Proceed to Checkout](/checkout/{booking_id}) where {booking_id} is the real UUID returned by the tool.
-- If `book_seats_tool` returns BOOKING_FAILED or asks for authentication, inform the user clearly and guide them to log in.
-- Format responses cleanly. When showing booking summaries, keep them structured and concise.
+CRITICAL RULES FOR WORKABLE PAYMENT & CHECKOUT LINKS:
+- NEVER EVER fabricate or hallucinate dummy booking IDs or fake URLs like 'https://cinemate.example.com/...'. Any link using 'cinemate.example.com' is completely broken and invalid.
+- NEVER pretend you booked or held seats without successfully calling `book_seats_tool`.
+- When `book_seats_tool` succeeds, provide the real workable checkout URL: {settings.FRONTEND_URL}/checkout/{{booking_id}}
+- Always format the link as: [Proceed to Checkout – Pay ₹{{amount}}]({settings.FRONTEND_URL}/checkout/{{booking_id}})
+- If `book_seats_tool` returns AUTHENTICATION_REQUIRED or BOOKING_FAILED, explain politely that they need to log in to finalize holding the seats.
+- Output clean, structured Markdown with bullet points or neat tables.
 """
 
 AVAILABLE_TOOLS = [

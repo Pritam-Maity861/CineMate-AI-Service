@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessage, HumanMessage
 from sse_starlette.sse import EventSourceResponse
 from app.graph.workflow import graph
+from app.graph.nodes import active_auth_token, active_generative_ui
 import json
 import logging
 
@@ -59,7 +60,12 @@ async def chat_endpoint(
     - Supports Server-Sent Events (SSE) streaming (set stream=true).
     - Auth token is OPTIONAL for movie discovery & seat browsing; only required when holding/booking seats.
     """
-    token = authorization or body.auth_token
+    raw_token = authorization or body.auth_token
+    token = None
+    if raw_token:
+        token = raw_token.replace("Bearer ", "").strip()
+    active_auth_token.set(token)
+    active_generative_ui.set(None)
 
     # 1. Build message list from conversation history + latest user message
     messages = []

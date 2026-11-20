@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     ENVIRONMENT: str = "development"
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    FRONTEND_URL: str = "http://localhost:5173"
 
     # Node.js Core Backend URL
     NODE_API_URL: str = "http://localhost:8080/api/v1"
