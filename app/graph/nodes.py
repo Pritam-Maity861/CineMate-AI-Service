@@ -340,17 +340,26 @@ async def get_my_bookings_tool() -> str:
         showtime = b.get("showtime", {})
         movie = showtime.get("movie", {})
         title = movie.get("title", "Movie")
-        theater = showtime.get("theater", {}).get("name", "Cinema")
+        screen_obj = showtime.get("screen", {})
+        theater = screen_obj.get("theater", {}).get("name") or showtime.get("theater", {}).get("name", "Cinema")
         start_time = showtime.get("startTime", "")
         seats = [
             bs.get("seat", {}).get("row", "") + str(bs.get("seat", {}).get("number", ""))
             for bs in b.get("seats", [])
         ]
         seats_str = ", ".join(filter(None, seats)) or "N/A"
+        link_str = (
+            f"[View & Download Ticket]({settings.FRONTEND_URL}/booking-success/{b_id})"
+            if status == "CONFIRMED"
+            else f"[Complete Payment]({settings.FRONTEND_URL}/checkout/{b_id})"
+        )
         summary.append(
-            f"- Booking ID: {b_id} | Status: {status} | Movie: {title} | Theater: {theater} | Seats: {seats_str} | Total: ₹{total} | Time: {start_time}"
+            f"- Booking ID: {b_id} | Status: {status} | Movie: {title} | Theater: {theater} | Seats: {seats_str} | Total: ₹{total} | Time: {start_time} | Link: {link_str}"
         )
 
+    summary.append(
+        "\nInstruction for assistant: If user asks for their ticket, ticket card, or ticket download for any confirmed booking, call get_booking_details_tool(booking_id=...) to display the interactive ticket card and PDF download in chat."
+    )
     return "\n".join(summary)
 
 
@@ -380,13 +389,81 @@ async def get_booking_details_tool(booking_id: str) -> str:
     showtime = b.get("showtime", {})
     movie = showtime.get("movie", {})
     title = movie.get("title", "Movie")
-    theater = showtime.get("theater", {}).get("name", "Cinema")
-    screen = showtime.get("screen", {}).get("name", "Screen")
+    poster_url = movie.get("posterUrl")
+    screen_obj = showtime.get("screen", {})
+    screen = screen_obj.get("name", "Screen")
+    theater = screen_obj.get("theater", {}).get("name") or showtime.get("theater", {}).get("name", "Cinema")
+    theater_address = screen_obj.get("theater", {}).get("address", "")
     start_time = showtime.get("startTime", "")
     seats = [
         bs.get("seat", {}).get("row", "") + str(bs.get("seat", {}).get("number", ""))
         for bs in b.get("seats", [])
     ]
+    seat_labels = list(filter(None, seats))
+
+    if status == "CONFIRMED":
+        active_generative_ui.set(
+            {
+                "type": "TICKET_CARD",
+                "data": {
+                    "booking_id": booking_id,
+                    "movie_title": title,
+                    "poster_url": poster_url,
+                    "theater_name": theater,
+                    "theater_address": theater_address,
+                    "screen_name": screen,
+                    "showtime": start_time,
+                    "seats": seat_labels,
+                    "total_amount": total,
+                    "status": status,
+                    "ticket_url": f"/booking-success/{booking_id}",
+                    "full_ticket_url": f"{settings.FRONTEND_URL}/booking-success/{booking_id}",
+                    "raw_booking": b,
+                },
+            }
+        )
+        return (
+            f"TICKET_READY!\n"
+            f"- Booking ID: {booking_id}\n"
+            f"- Status: CONFIRMED\n"
+            f"- Movie: {title}\n"
+            f"- Theater: {theater} ({screen})\n"
+            f"- Showtime: {start_time}\n"
+            f"- Seats: {', '.join(seat_labels)}\n"
+            f"- Total Paid: ₹{total}\n"
+            f"- Ticket URL: {settings.FRONTEND_URL}/booking-success/{booking_id}\n"
+            f"Instruction for assistant: Present the official confirmed e-ticket to the user directly with the details above.\n"
+            f"The CineMate chat interface has already rendered an interactive E-Ticket Card with a direct 'Download PDF' button and 'View Ticket' button for the user.\n"
+            f"DO NOT apologize or say you cannot provide a ticket or download link! You MUST provide this clickable link: [View & Download Ticket]({settings.FRONTEND_URL}/booking-success/{booking_id})."
+        )
+    elif status == "PENDING":
+        active_generative_ui.set(
+            {
+                "type": "BOOKING_HOLD",
+                "data": {
+                    "booking_id": booking_id,
+                    "checkout_url": f"/checkout/{booking_id}",
+                    "full_checkout_url": f"{settings.FRONTEND_URL}/checkout/{booking_id}",
+                    "total_amount": total,
+                    "seats": seat_labels,
+                    "expires_at": b.get("expiresAt"),
+                    "movie_title": title,
+                    "theater_name": theater,
+                },
+            }
+        )
+        return (
+            f"PENDING_BOOKING:\n"
+            f"- Booking ID: {booking_id}\n"
+            f"- Status: PENDING\n"
+            f"- Movie: {title}\n"
+            f"- Theater: {theater} ({screen})\n"
+            f"- Showtime: {start_time}\n"
+            f"- Seats: {', '.join(seat_labels)}\n"
+            f"- Total Amount: ₹{total}\n"
+            f"- Checkout Link: {settings.FRONTEND_URL}/checkout/{booking_id}\n"
+            f"Instruction for assistant: Seats are on hold. Provide the checkout link: [Proceed to Checkout – Pay ₹{total}]({settings.FRONTEND_URL}/checkout/{booking_id})."
+        )
 
     return (
         f"Booking Details:\n"
@@ -395,9 +472,8 @@ async def get_booking_details_tool(booking_id: str) -> str:
         f"- Movie: {title}\n"
         f"- Theater: {theater} ({screen})\n"
         f"- Showtime: {start_time}\n"
-        f"- Seats: {', '.join(filter(None, seats))}\n"
+        f"- Seats: {', '.join(seat_labels)}\n"
         f"- Total Amount: ₹{total}\n"
-        f"- Checkout Link (if pending): {settings.FRONTEND_URL}/checkout/{booking_id}"
     )
 
 
@@ -492,6 +568,14 @@ ROLE & ACCESS PERMISSIONS:
 2. AUTHENTICATED ACTIONS:
    - When user is logged in, you can hold seats (`book_seats_tool`), view user bookings (`get_my_bookings_tool`), and inspect booking details (`get_booking_details_tool`).
    - If user is not logged in, explain politely that they can log in at [Log In to CineMate](/login) to complete booking or view personal tickets.
+
+TICKET RETRIEVAL & DIRECT DISPLAY (CRITICAL):
+- When a user asks "show my ticket", "give me the ticket for [Movie]", "download ticket", "send me the ticket", or queries a booking ID:
+  1. Call `get_booking_details_tool(booking_id=...)` (or `get_my_bookings_tool()` first if the booking ID is not known).
+  2. NEVER say "I'm sorry, but I can't provide a direct download link or file for your ticket" or ask the user to manually navigate to their account!
+  3. The CineMate chat system automatically displays an interactive E-Ticket Card right inside the chat window, complete with an instant "Download PDF" button and "View Ticket" button!
+  4. Present all details of the confirmed booking proudly and warmly.
+  5. Always provide the direct clickable link format: `[View & Download Ticket](http://localhost:5173/booking-success/<booking-id>)`.
 
 FORMATTING GUIDELINES:
 - Use clean, structured Markdown with bullet points or compact tables.
