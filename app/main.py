@@ -10,13 +10,20 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS
+# CORS configuration
+allowed_origins = set(settings.CORS_ORIGINS)
+if settings.FRONTEND_URL:
+    allowed_origins.add(settings.FRONTEND_URL.rstrip("/"))
+allowed_origins.add("https://chobighor.vercel.app")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=list(allowed_origins),
+    allow_origin_regex=r"^https://.*\.vercel\.app$|^http://localhost(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Route Mounts
