@@ -72,11 +72,15 @@ async def search_movies_tool(
     language_id: str = "",
 ) -> str:
     """Search approved movies in CineMate catalog by keyword, genre, or language."""
-    data = await node_client.search_movies(
-        search=query or None,
-        genre_id=genre_id or None,
-        language_id=language_id or None,
-    )
+    try:
+        data = await node_client.search_movies(
+            search=query or None,
+            genre_id=genre_id or None,
+            language_id=language_id or None,
+        )
+    except Exception as e:
+        return f"ERROR: Could not connect to CineMate backend ({str(e)}). Please verify the backend server is running and reachable at {settings.NODE_API_URL}."
+
     movies = data.get("movies", [])
     if not movies:
         return "No movies found matching the search criteria."
@@ -95,9 +99,12 @@ async def semantic_movie_search_tool(vibe_or_theme: str) -> str:
     Search movies semantically by vibe, theme, plot description, or mood.
     Examples: 'mind-bending sci-fi with dark humor', 'emotional family drama', 'action thriller with twists'.
     """
-    from app.vector.search import semantic_movie_search
+    try:
+        from app.vector.search import semantic_movie_search
+        results = await semantic_movie_search(query=vibe_or_theme, top_k=5)
+    except Exception as e:
+        return f"ERROR: Could not perform semantic search ({str(e)}). Backend connection may be unavailable."
 
-    results = await semantic_movie_search(query=vibe_or_theme, top_k=5)
     if not results:
         return f"No movies found matching the theme '{vibe_or_theme}'."
 
@@ -114,7 +121,11 @@ async def semantic_movie_search_tool(vibe_or_theme: str) -> str:
 @tool
 async def get_movie_details_tool(movie_id: str) -> str:
     """Get full details of a movie including synopsis, duration, cast, director, and trailer."""
-    m = await node_client.get_movie_details(movie_id)
+    try:
+        m = await node_client.get_movie_details(movie_id)
+    except Exception as e:
+        return f"ERROR: Could not fetch movie details ({str(e)}). Backend unreachable at {settings.NODE_API_URL}."
+
     if not m:
         return f"Movie with ID {movie_id} not found."
 
@@ -144,7 +155,11 @@ async def get_movie_details_tool(movie_id: str) -> str:
 @tool
 async def list_theaters_tool(city: str = "") -> str:
     """List approved cinemas and their amenities (IMAX, Dolby Atmos, Recliners) in a given city."""
-    theaters = await node_client.list_theaters(city=city or None)
+    try:
+        theaters = await node_client.list_theaters(city=city or None)
+    except Exception as e:
+        return f"ERROR: Could not list theaters ({str(e)}). Backend unreachable at {settings.NODE_API_URL}."
+
     if not theaters:
         return f"No approved theaters found{' in ' + city if city else ''}."
     lines = []
@@ -159,7 +174,11 @@ async def list_theaters_tool(city: str = "") -> str:
 @tool
 async def get_showtimes_tool(movie_id: str, date: str) -> str:
     """Fetch showtimes for a movie on a specific date (YYYY-MM-DD format)."""
-    data = await node_client.get_showtimes(movie_id=movie_id, date=date)
+    try:
+        data = await node_client.get_showtimes(movie_id=movie_id, date=date)
+    except Exception as e:
+        return f"ERROR: Could not fetch showtimes ({str(e)}). Backend unreachable at {settings.NODE_API_URL}."
+
     if not data:
         return f"No showtimes scheduled for movie {movie_id} on {date}."
     lines = []
@@ -176,7 +195,11 @@ async def get_showtimes_tool(movie_id: str, date: str) -> str:
 @tool
 async def get_showtime_seats_tool(showtime_id: str) -> str:
     """Check real-time seat availability map, pricing tiers, and occupied seats for a showtime."""
-    data = await node_client.get_showtime_seats(showtime_id)
+    try:
+        data = await node_client.get_showtime_seats(showtime_id)
+    except Exception as e:
+        return f"ERROR: Could not fetch seats ({str(e)}). Backend unreachable at {settings.NODE_API_URL}."
+
     seats = data.get("seats", [])
     if not seats:
         return "No seats found for this showtime."
